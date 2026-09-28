@@ -57,6 +57,33 @@ function sendJSON(res, status, data) {
 }
 
 // ============================================
+// 📸 آپلود عکس در ImgBB
+// ============================================
+async function uploadToImgBB(base64Image) {
+  const apiKey = process.env.IMGBB_API_KEY;
+  if (!apiKey) throw new Error('IMGBB_API_KEY تعریف نشده');
+
+  // حذف prefix data:image/...;base64, از ابتدای base64
+  const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
+
+  const formData = new URLSearchParams();
+  formData.append('key', apiKey);
+  formData.append('image', cleanBase64);
+
+  const response = await fetch('https://api.imgbb.com/1/upload', {
+    method: 'POST',
+    body: formData
+  });
+
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error('خطا در آپلود عکس: ' + (data.error?.message || 'ناشناخته'));
+  }
+
+  return data.data.url;
+}
+
+// ============================================
 // 🚀 هندلر اصلی
 // ============================================
 module.exports = async (req, res) => {
@@ -65,19 +92,35 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   // مسیر درخواست
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname.replace('/api/', '').replace(/^\//, '');
   const parts = path.split('/').filter(Boolean);
-  const resource = parts[0];      // products, categories, etc.
-  const id = parts[1];             // 123
+  const resource = parts[0];
+  const id = parts[1];
 
   try {
     const { db } = await connectToDatabase();
+
+    // ============================================
+    // 📸 آپلود عکس
+    // ============================================
+    if (resource === 'upload' && req.method === 'POST') {
+      const user = verifyToken(req);
+      if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+
+      const { image } = req.body;
+      if (!image) return sendJSON(res, 400, { error: 'عکسی ارسال نشده' });
+
+      try {
+        const imageUrl = await uploadToImgBB(image);
+        return sendJSON(res, 200, { success: true, url: imageUrl });
+      } catch (err) {
+        return sendJSON(res, 500, { error: 'خطا در آپلود', message: err.message });
+      }
+    }
 
     // ============================================
     // 📦 محصولات
@@ -85,7 +128,7 @@ module.exports = async (req, res) => {
     if (resource === 'products') {
       const collection = db.collection('products');
 
-      // GET - همه محصولات
+      // GET
       if (req.method === 'GET') {
         if (id) {
           const product = await collection.findOne({ id: Number(id) });
@@ -98,7 +141,8 @@ module.exports = async (req, res) => {
 
       // POST - افزودن
       if (req.method === 'POST') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
 
         const product = req.body;
         if (!product.name || !product.price) {
@@ -115,7 +159,8 @@ module.exports = async (req, res) => {
 
       // PUT - ویرایش
       if (req.method === 'PUT') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         if (!id) return sendJSON(res, 400, { error: 'ID الزامی است' });
 
         const updates = { ...req.body };
@@ -126,9 +171,10 @@ module.exports = async (req, res) => {
         return sendJSON(res, 200, { success: true });
       }
 
-      // DELETE - حذف
+      // DELETE
       if (req.method === 'DELETE') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         if (!id) return sendJSON(res, 400, { error: 'ID الزامی است' });
 
         await collection.deleteOne({ id: Number(id) });
@@ -148,7 +194,8 @@ module.exports = async (req, res) => {
       }
 
       if (req.method === 'POST') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
 
         const category = req.body;
         if (!category.name) return sendJSON(res, 400, { error: 'نام الزامی است' });
@@ -159,7 +206,8 @@ module.exports = async (req, res) => {
       }
 
       if (req.method === 'PUT') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         if (!id) return sendJSON(res, 400, { error: 'ID الزامی است' });
 
         const updates = { ...req.body };
@@ -171,7 +219,8 @@ module.exports = async (req, res) => {
       }
 
       if (req.method === 'DELETE') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         if (!id) return sendJSON(res, 400, { error: 'ID الزامی است' });
 
         await collection.deleteOne({ id });
@@ -185,7 +234,6 @@ module.exports = async (req, res) => {
     if (resource === 'orders') {
       const collection = db.collection('orders');
 
-      // POST - ثبت سفارش
       if (req.method === 'POST') {
         const order = req.body;
         order.id = Date.now();
@@ -195,16 +243,16 @@ module.exports = async (req, res) => {
         return sendJSON(res, 201, { success: true, order });
       }
 
-      // GET - همه سفارشات (ادمین)
       if (req.method === 'GET') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         const orders = await collection.find({}).sort({ createdAt: -1 }).toArray();
         return sendJSON(res, 200, { success: true, orders });
       }
 
-      // DELETE
       if (req.method === 'DELETE') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         if (!id) return sendJSON(res, 400, { error: 'ID الزامی است' });
         await collection.deleteOne({ id: Number(id) });
         return sendJSON(res, 200, { success: true });
@@ -217,7 +265,6 @@ module.exports = async (req, res) => {
     if (resource === 'users') {
       const collection = db.collection('users');
 
-      // POST - ثبت‌نام
       if (req.method === 'POST') {
         const { name, phone, email, password } = req.body;
 
@@ -232,8 +279,7 @@ module.exports = async (req, res) => {
 
         const user = {
           id: Date.now(),
-          name,
-          phone,
+          name, phone,
           email: email || '',
           password,
           registeredAt: new Date()
@@ -246,9 +292,9 @@ module.exports = async (req, res) => {
         });
       }
 
-      // GET - همه کاربران (ادمین)
       if (req.method === 'GET') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         const users = await collection.find({}).toArray();
         return sendJSON(res, 200, { success: true, users });
       }
@@ -282,7 +328,6 @@ module.exports = async (req, res) => {
     if (resource === 'messages') {
       const collection = db.collection('messages');
 
-      // POST - پیام جدید
       if (req.method === 'POST') {
         const message = req.body;
         message.id = Date.now();
@@ -291,16 +336,16 @@ module.exports = async (req, res) => {
         return sendJSON(res, 201, { success: true, message });
       }
 
-      // GET - همه پیام‌ها (ادمین)
       if (req.method === 'GET') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         const messages = await collection.find({}).sort({ createdAt: -1 }).toArray();
         return sendJSON(res, 200, { success: true, messages });
       }
 
-      // DELETE
       if (req.method === 'DELETE') {
-        if (!verifyToken(req)) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        const user = verifyToken(req);
+        if (!user) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
         if (!id) return sendJSON(res, 400, { error: 'ID الزامی است' });
         await collection.deleteOne({ id: Number(id) });
         return sendJSON(res, 200, { success: true });
