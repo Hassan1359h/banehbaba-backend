@@ -1,6 +1,6 @@
 // ============================================
 // بانه بابا - Backend API
-// Vercel Serverless Functions
+// Vercel Serverless + Supabase Storage
 // ============================================
 
 const { MongoClient } = require('mongodb');
@@ -57,30 +57,51 @@ function sendJSON(res, status, data) {
 }
 
 // ============================================
-// 📸 آپلود عکس در ImgBB
+// 📸 آپلود عکس در Supabase Storage
 // ============================================
-async function uploadToImgBB(base64Image) {
-  const apiKey = process.env.IMGBB_API_KEY;
-  if (!apiKey) throw new Error('IMGBB_API_KEY تعریف نشده');
+async function uploadToSupabase(base64Image) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
 
-  // حذف prefix data:image/...;base64, از ابتدای base64
-  const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
-
-  const formData = new URLSearchParams();
-  formData.append('key', apiKey);
-  formData.append('image', cleanBase64);
-
-  const response = await fetch('https://api.imgbb.com/1/upload', {
-    method: 'POST',
-    body: formData
-  });
-
-  const data = await response.json();
-  if (!data.success) {
-    throw new Error('خطا در آپلود عکس: ' + (data.error?.message || 'ناشناخته'));
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error('SUPABASE_URL یا SUPABASE_SERVICE_KEY تعریف نشده');
   }
 
-  return data.data.url;
+  // جدا کردن نوع فایل و داده
+  const matches = base64Image.match(/^data:image\/(\w+);base64,(.+)$/);
+  if (!matches) {
+    throw new Error('فرمت عکس نامعتبر است');
+  }
+
+  const extension = matches[1]; // png, jpeg, webp, ...
+  const base64Data = matches[2];
+  const buffer = Buffer.from(base64Data, 'base64');
+
+  // اسم فایل منحصر به فرد
+  const fileName = `product-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${extension}`;
+  const filePath = fileName; // داخل bucket
+
+  // آپلود به Supabase
+  const uploadUrl = `${supabaseUrl}/storage/v1/object/products/${filePath}`;
+  
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${serviceKey}`,
+      'Content-Type': `image/${extension}`,
+      'x-upsert': 'true'
+    },
+    body: buffer
+  });
+
+  if (!uploadResponse.ok) {
+    const errText = await uploadResponse.text();
+    throw new Error(`خطا در آپلود: ${uploadResponse.status} - ${errText}`);
+  }
+
+  // URL عمومی فایل
+  const publicUrl = `${supabaseUrl}/storage/v1/object/public/products/${filePath}`;
+  return publicUrl;
 }
 
 // ============================================
@@ -115,9 +136,10 @@ module.exports = async (req, res) => {
       if (!image) return sendJSON(res, 400, { error: 'عکسی ارسال نشده' });
 
       try {
-        const imageUrl = await uploadToImgBB(image);
+        const imageUrl = await uploadToSupabase(image);
         return sendJSON(res, 200, { success: true, url: imageUrl });
       } catch (err) {
+        console.error('Upload error:', err);
         return sendJSON(res, 500, { error: 'خطا در آپلود', message: err.message });
       }
     }
@@ -359,6 +381,7 @@ module.exports = async (req, res) => {
       return sendJSON(res, 200, {
         success: true,
         message: 'بانه بابا API فعال است',
+        storage: 'Supabase',
         time: new Date().toISOString()
       });
     }
