@@ -669,31 +669,173 @@ module.exports = async (req, res) => {
         }
       });
     }
-
+    
     // ============================================
     // 📂 دسته‌بندی‌ها
     // ============================================
     if (resource === 'categories') {
       const collection = db.collection('categories');
 
+      // دریافت عمومی دسته‌بندی‌ها
       if (req.method === 'GET') {
-        const categories = await collection.find({}).toArray();
-        return sendJSON(res, 200, { success: true, categories });
+        const categories = await collection
+          .find({})
+          .sort({ order: 1, name: 1 })
+          .toArray();
+
+        return sendJSON(res, 200, {
+          success: true,
+          categories
+        });
       }
 
+      // افزودن دسته‌بندی
       if (req.method === 'POST') {
         const admin = verifyAdmin(req);
-        if (!admin) return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        if (!admin) {
+          return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        }
 
-        const category = req.body;
-        if (!category.name) return sendJSON(res, 400, { error: 'نام الزامی است' });
+        const body = req.body || {};
+        const name = String(body.name || '').trim();
 
-        category.id = 'cat_' + Date.now();
+        if (!name) {
+          return sendJSON(res, 400, { error: 'نام دسته‌بندی الزامی است' });
+        }
+
+        const category = {
+          id: 'cat_' + Date.now() + '_' +
+              Math.random().toString(36).slice(2, 7),
+          name,
+          icon: String(body.icon || '📂'),
+          image: String(body.image || ''),
+          order: Number.isFinite(Number(body.order))
+            ? Number(body.order)
+            : 0,
+          subcategories: Array.isArray(body.subcategories)
+            ? body.subcategories.map(x => String(x).trim()).filter(Boolean)
+            : [],
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
         await collection.insertOne(category);
-        return sendJSON(res, 201, { success: true, category });
-      }
-    }
 
+        return sendJSON(res, 201, {
+          success: true,
+          category
+        });
+      }
+
+      // ویرایش دسته‌بندی
+      if (req.method === 'PUT' && id) {
+        const admin = verifyAdmin(req);
+        if (!admin) {
+          return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        }
+
+        const body = req.body || {};
+        const updates = {};
+
+        if (body.name !== undefined) {
+          const name = String(body.name).trim();
+
+          if (!name) {
+            return sendJSON(res, 400, {
+              error: 'نام دسته‌بندی نمی‌تواند خالی باشد'
+            });
+          }
+
+          updates.name = name;
+        }
+
+        if (body.icon !== undefined) {
+          updates.icon = String(body.icon);
+        }
+
+        if (body.image !== undefined) {
+          updates.image = String(body.image);
+        }
+
+        if (body.order !== undefined) {
+          const order = Number(body.order);
+
+          if (!Number.isFinite(order)) {
+            return sendJSON(res, 400, {
+              error: 'ترتیب نمایش نامعتبر است'
+            });
+          }
+
+          updates.order = order;
+        }
+
+        if (body.subcategories !== undefined) {
+          if (!Array.isArray(body.subcategories)) {
+            return sendJSON(res, 400, {
+              error: 'ساختار زیردسته‌ها نامعتبر است'
+            });
+          }
+
+          updates.subcategories = body.subcategories
+            .map(x => String(x).trim())
+            .filter(Boolean);
+        }
+
+        updates.updatedAt = new Date();
+
+        const result = await collection.updateOne(
+          { id },
+          { $set: updates }
+        );
+
+        if (!result.matchedCount) {
+          return sendJSON(res, 404, {
+            error: 'دسته‌بندی یافت نشد'
+          });
+        }
+
+        return sendJSON(res, 200, {
+          success: true,
+          message: 'دسته‌بندی ویرایش شد'
+        });
+      }
+
+      // حذف دسته‌بندی
+      if (req.method === 'DELETE' && id) {
+        const admin = verifyAdmin(req);
+        if (!admin) {
+          return sendJSON(res, 401, { error: 'دسترسی ندارید' });
+        }
+
+        // جلوگیری از حذف دسته‌ای که محصول دارد
+        const productCount = await db.collection('products')
+          .countDocuments({ category: id });
+
+        if (productCount > 0) {
+          return sendJSON(res, 409, {
+            error: 'این دسته‌بندی محصول دارد. ابتدا محصولات آن را به دسته دیگری منتقل کنید.'
+          });
+        }
+
+        const result = await collection.deleteOne({ id });
+
+        if (!result.deletedCount) {
+          return sendJSON(res, 404, {
+            error: 'دسته‌بندی یافت نشد'
+          });
+        }
+
+        return sendJSON(res, 200, {
+          success: true,
+          message: 'دسته‌بندی حذف شد'
+        });
+      }
+
+      return sendJSON(res, 405, {
+        error: 'متد درخواست پشتیبانی نمی‌شود'
+      });
+    }
+    
     // ============================================
     // 🔐 ورود ادمین
     // ============================================
