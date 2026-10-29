@@ -835,28 +835,72 @@ module.exports = async (req, res) => {
         error: 'متد درخواست پشتیبانی نمی‌شود'
       });
     }
-    
+
     // ============================================
-    // 🔐 ورود ادمین
+// 🔑 بازیابی رمز ادمین
+// ============================================
+if (resource === 'admin' && parts[1] === 'reset-password') {
+  if (req.method !== 'POST') return sendJSON(res, 405, { error: 'متد نامعتبر' });
+
+  const { recoveryCode, newPassword } = req.body;
+  const SECRET_CODE = process.env.ADMIN_RECOVERY_CODE;
+
+  if (!SECRET_CODE) {
+    return sendJSON(res, 500, { error: 'کد بازیابی در تنظیمات سرور تعریف نشده است' });
+  }
+
+  if (recoveryCode !== SECRET_CODE) {
+    return sendJSON(res, 401, { error: 'کد بازیابی اشتباه است' });
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return sendJSON(res, 400, { error: 'رمز جدید باید حداقل ۶ کاراکتر باشد' });
+  }
+
+  const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+  const adminCollection = db.collection('admin_settings');
+  
+  // ذخیره رمز جدید در دیتابیس
+  await adminCollection.updateOne(
+    { username: ADMIN_USERNAME },
+    { $set: { password: newPassword, updatedAt: new Date() } },
+    { upsert: true }
+  );
+
+  return sendJSON(res, 200, { success: true, message: 'رمز عبور با موفقیت تغییر کرد' });
+}
+
     // ============================================
-    if (resource === 'admin' && parts[1] === 'login') {
-      if (req.method !== 'POST') return sendJSON(res, 405, { error: 'متد نامعتبر' });
+// 🔐 ورود ادمین
+// ============================================
+if (resource === 'admin' && parts[1] === 'login') {
+  if (req.method !== 'POST') return sendJSON(res, 405, { error: 'متد نامعتبر' });
 
-      const { username, password } = req.body;
-      const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-      const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'banehbaba2024';
+  const { username, password } = req.body;
+  const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+  
+  // بررسی رمز در دیتابیس (اگر قبلا تغییر داده شده باشد)
+  const adminCollection = db.collection('admin_settings');
+  const adminSettings = await adminCollection.findOne({ username: ADMIN_USERNAME });
+  
+  let currentPassword = process.env.ADMIN_PASSWORD || 'banehbaba2024';
+  
+  // اگر رمزی در دیتابیس ذخیره شده بود، از آن استفاده کن
+  if (adminSettings && adminSettings.password) {
+    currentPassword = adminSettings.password;
+  }
 
-      if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-        const token = jwt.sign(
-          { username, role: 'admin' },
-          JWT_SECRET,
-          { expiresIn: '7d' }
-        );
-        return sendJSON(res, 200, { success: true, token });
-      }
+  if (username === ADMIN_USERNAME && password === currentPassword) {
+    const token = jwt.sign(
+      { username, role: 'admin' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    return sendJSON(res, 200, { success: true, token });
+  }
 
-      return sendJSON(res, 401, { error: 'نام کاربری یا رمز اشتباه است' });
-    }
+  return sendJSON(res, 401, { error: 'نام کاربری یا رمز اشتباه است' });
+}
 
     // ============================================
     // 💬 پیام‌ها
